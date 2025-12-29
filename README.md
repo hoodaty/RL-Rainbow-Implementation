@@ -6,7 +6,7 @@ The project replicates the key components of the Rainbow paper to verify claims 
 
 Authors:
 * Alice Lataste
-* Sami laita
+* Sami Laita
 * Soumodeep Hoodaty
 
 ## 🔬 Architecture & Adaptations
