@@ -4,6 +4,11 @@ This repository contains a PyTorch implementation of the **Rainbow** agent (Hess
 
 The project replicates the key components of the Rainbow paper to verify claims of data efficiency and performance on a computationally constrained environment (MinAtar), which serves as a miniature version of the Atari 2600 benchmark.
 
+Authors:
+* Alice Lataste
+* Sami laita
+* Soumodeep Hoodaty
+
 ## 🔬 Architecture & Adaptations
 
 This implementation adapts the original Atari architecture for MinAtar's $10 \times 10 \times N$ channel inputs:
