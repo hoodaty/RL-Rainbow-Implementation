@@ -8,6 +8,7 @@ import pickle
 import numpy as np
 import torch
 from tqdm import trange
+import wandb # <--- Import WandB
 
 from agent import Agent
 from env import Env
@@ -15,14 +16,13 @@ from memory import ReplayMemory
 from test import test
 
 parser = argparse.ArgumentParser(description='Rainbow')
-parser.add_argument('--id', type=str, default='minatar_test', help='Experiment ID')
+parser.add_argument('--id', type=str, default='rainbow_minatar', help='Experiment ID')
 parser.add_argument('--seed', type=int, default=123, help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
 parser.add_argument('--game', type=str, default='breakout', help='MinAtar game')
 parser.add_argument('--T-max', type=int, default=int(1e6), metavar='STEPS', help='Number of training steps')
 parser.add_argument('--max-episode-length', type=int, default=int(1000), metavar='LENGTH', help='Max episode length')
 parser.add_argument('--history-length', type=int, default=4, metavar='T', help='Number of consecutive states processed')
-parser.add_argument('--architecture', type=str, default='minatar', help='Network architecture')
 parser.add_argument('--hidden-size', type=int, default=64, metavar='SIZE', help='Network hidden size')
 parser.add_argument('--noisy-std', type=float, default=0.1, metavar='σ', help='Initial standard deviation of noisy linear layers')
 parser.add_argument('--atoms', type=int, default=51, metavar='C', help='Discretised size of value distribution')
@@ -48,11 +48,14 @@ parser.add_argument('--evaluation-episodes', type=int, default=10, metavar='N', 
 parser.add_argument('--evaluation-size', type=int, default=500, metavar='N', help='Number of transitions to use for validating Q')
 parser.add_argument('--render', action='store_true', help='Display screen (testing only)')
 parser.add_argument('--enable-cudnn', action='store_true', help='Enable cuDNN (faster but nondeterministic)')
-parser.add_argument('--checkpoint-interval', default=0, help='How often to checkpoint the model, defaults to 0 (never checkpoint)')
+parser.add_argument('--checkpoint-interval', default=0, help='How often to checkpoint the model')
 parser.add_argument('--memory', help='Path to save/load the memory from')
-parser.add_argument('--disable-bzip-memory', action='store_true', help='Don\'t zip the memory file. Not recommended (zipping is a bit slower and much, much smaller)')
+parser.add_argument('--disable-bzip-memory', action='store_true', help='Don\'t zip the memory file.')
 
-# Setup
+# WandB Arguments
+parser.add_argument('--wandb', action='store_true', help='Enable WandB logging')
+parser.add_argument('--wandb-project', type=str, default='rainbow-minatar', help='WandB project name')
+
 args = parser.parse_args()
 
 print(' ' * 26 + 'Options')
@@ -70,10 +73,12 @@ if torch.cuda.is_available() and not args.disable_cuda:
 else:
   args.device = torch.device('cpu')
 
+# Init WandB
+if args.wandb:
+  wandb.init(project=args.wandb_project, config=vars(args), name=args.id)
 
 def log(s):
   print('[' + str(datetime.now().strftime('%Y-%m-%dT%H:%M:%S')) + '] ' + s)
-
 
 def load_memory(memory_path, disable_bzip):
   if disable_bzip:
@@ -83,7 +88,6 @@ def load_memory(memory_path, disable_bzip):
     with bz2.open(memory_path, 'rb') as zipped_pickle_file:
       return pickle.load(zipped_pickle_file)
 
-
 def save_memory(memory, memory_path, disable_bzip):
   if disable_bzip:
     with open(memory_path, 'wb') as pickle_file:
@@ -92,15 +96,10 @@ def save_memory(memory, memory_path, disable_bzip):
     with bz2.open(memory_path, 'wb') as zipped_pickle_file:
       pickle.dump(memory, zipped_pickle_file)
 
-# Environment
 env = Env(args)
 env.train()
 action_space = env.action_space()
-
-# Manually pass channel count to args for Model
 args.n_channels = env.n_channels
-
-# Agent
 dqn = Agent(args, env)
 
 if args.model is not None and not args.evaluate:
@@ -148,12 +147,20 @@ else:
       mem.priority_weight = min(mem.priority_weight + priority_weight_increase, 1)
 
       if T % args.replay_frequency == 0:
-        dqn.learn(mem)
+        loss = dqn.learn(mem) # Agent returns loss now
+        # Log training loss to WandB
+        if args.wandb:
+           wandb.log({'train/loss': loss, 'train/epsilon': 0}, step=T) # Epsilon is 0 for NoisyNets
 
       if T % args.evaluation_interval == 0:
         dqn.eval()
         avg_reward, avg_Q = test(args, T, dqn, val_mem, metrics, results_dir)
         log('T = ' + str(T) + ' / ' + str(args.T_max) + ' | Avg. reward: ' + str(avg_reward) + ' | Avg. Q: ' + str(avg_Q))
+
+        # Log evaluation metrics to WandB
+        if args.wandb:
+           wandb.log({'eval/avg_reward': avg_reward, 'eval/avg_Q': avg_Q}, step=T)
+
         dqn.train()
 
         if args.memory is not None:

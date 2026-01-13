@@ -9,15 +9,15 @@ class DQN(nn.Module):
     super(DQN, self).__init__()
     self.atoms = args.atoms
     self.action_space = action_space
-    
-    # MinAtar Adaptation: 
+
+    # MinAtar Adaptation:
     # Check if 'n_channels' is in args (passed from Env), otherwise assume 4 (Breakout)
-    n_channels = getattr(args, 'n_channels', 4) 
+    n_channels = getattr(args, 'n_channels', 4)
     self.input_channels = args.history_length * n_channels
 
     # Standard CNN for MinAtar (same as Rainbow adaptation)
     self.convs = nn.Sequential(
-        nn.Conv2d(self.input_channels, 16, kernel_size=3, stride=1), 
+        nn.Conv2d(self.input_channels, 16, kernel_size=3, stride=1),
         nn.ReLU()
     )
     self.conv_output_size = 16 * 8 * 8
@@ -32,14 +32,14 @@ class DQN(nn.Module):
     x = x.view(-1, self.input_channels, 10, 10)
     x = self.convs(x)
     x = x.view(-1, self.conv_output_size)
-    
+
     # Standard Head
     x = F.relu(self.fc_h(x))
     x = self.fc_z(x)
-    
+
     # Reshape to (Batch, Actions, Atoms)
     q = x.view(-1, self.action_space, self.atoms)
-    
+
     if log:
       q = F.log_softmax(q, dim=2)
     else:

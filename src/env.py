@@ -9,14 +9,14 @@ class Env():
     self.device = args.device
     self.env = Environment(args.game)
     self.num_actions = self.env.num_actions()
-    
+
     # MinAtar state is (10, 10, C). We need to verify channels.
     self.n_channels = self.env.state_shape()[2]
-    
+
     # History buffer for stacking frames
     self.window = args.history_length
     self.state_buffer = deque([], maxlen=self.window)
-    self.training = True 
+    self.training = True
 
   def _get_state(self):
     # Convert MinAtar (10, 10, C) boolean -> PyTorch (C, 10, 10) float

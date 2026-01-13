@@ -45,16 +45,13 @@ class Agent():
 
     self.optimiser = optim.Adam(self.online_net.parameters(), lr=args.learning_rate, eps=args.adam_eps)
 
-  # Resets noisy weights in all linear layers (of online net only)
   def reset_noise(self):
     self.online_net.reset_noise()
 
-  # Acts based on single state (no batch)
   def act(self, state):
     with torch.no_grad():
       return (self.online_net(state.unsqueeze(0)) * self.support).sum(2).argmax(1).item()
 
-  # Acts with an ε-greedy policy (used for evaluation only)
   def act_e_greedy(self, state, epsilon=0.001):  # High ε can reduce evaluation scores drastically
     return np.random.randint(0, self.action_space) if np.random.random() < epsilon else self.act(state)
 
@@ -99,14 +96,14 @@ class Agent():
 
     mem.update_priorities(idxs, loss.detach().cpu().numpy())  # Update priorities of sampled transitions
 
+    return loss.mean().item() # <--- MODIFICATION: Return loss for WandB
+
   def update_target_net(self):
     self.target_net.load_state_dict(self.online_net.state_dict())
 
-  # Save model parameters on current device (don't move model between devices)
   def save(self, path, name='model.pth'):
     torch.save(self.online_net.state_dict(), os.path.join(path, name))
 
-  # Evaluates Q-value based on single state (no batch)
   def evaluate_q(self, state):
     with torch.no_grad():
       return (self.online_net(state.unsqueeze(0)) * self.support).sum(2).max(1)[0].item()

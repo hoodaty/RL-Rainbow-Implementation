@@ -3,20 +3,25 @@ from __future__ import division
 import numpy as np
 import torch
 
-# HARDCODED FOR MINATAR (Breakout=4). Change to 6 for Space Invaders if needed.
-CHANNELS = 4 
-
-Transition_dtype = np.dtype([('timestep', np.int32), ('state', np.uint8, (CHANNELS, 10, 10)), ('action', np.int32), ('reward', np.float32), ('nonterminal', np.bool_)])
-blank_trans = (0, np.zeros((CHANNELS, 10, 10), dtype=np.uint8), 0, 0.0, False)
-
 class SegmentTree():
-  def __init__(self, size):
+  def __init__(self, size, n_channels):
     self.index = 0
     self.size = size
     self.full = False
     self.tree_start = 2**(size-1).bit_length()-1
     self.sum_tree = np.zeros((self.tree_start + self.size,), dtype=np.float32)
-    self.data = np.array([blank_trans] * size, dtype=Transition_dtype)
+
+    # Dynamically define the dtype based on n_channels
+    self.Transition_dtype = np.dtype([
+        ('timestep', np.int32), 
+        ('state', np.uint8, (n_channels, 10, 10)), 
+        ('action', np.int32), 
+        ('reward', np.float32), 
+        ('nonterminal', np.bool_)
+    ])
+    self.blank_trans = (0, np.zeros((n_channels, 10, 10), dtype=np.uint8), 0, 0.0, False)
+
+    self.data = np.array([self.blank_trans] * size, dtype=self.Transition_dtype)
     self.max = 1
 
   def _update_nodes(self, indices):
@@ -89,11 +94,15 @@ class ReplayMemory():
     self.priority_exponent = args.priority_exponent
     self.t = 0
     self.n_step_scaling = torch.tensor([self.discount ** i for i in range(self.n)], dtype=torch.float32, device=self.device)
-    self.transitions = SegmentTree(capacity)
+
+    # FIX: Get channels dynamically from args (defaults to 4 if missing)
+    self.n_channels = getattr(args, 'n_channels', 4)
+
+    # Initialize SegmentTree with the correct channel count
+    self.transitions = SegmentTree(capacity, self.n_channels)
 
   def append(self, state, action, reward, terminal):
     # State is (History, C, 10, 10). We only store the newest frame: state[-1]
-    # We store as uint8 to save space (though MinAtar is 0-1, scaling to 255 is safe)
     state = state[-1].mul(255).to(dtype=torch.uint8, device=torch.device('cpu'))
     self.transitions.append((self.t, state, action, reward, not terminal), self.transitions.max)
     self.t = 0 if terminal else self.t + 1
@@ -107,7 +116,9 @@ class ReplayMemory():
       blank_mask[:, t] = np.logical_or(blank_mask[:, t + 1], transitions_firsts[:, t + 1])
     for t in range(self.history, self.history + self.n):
       blank_mask[:, t] = np.logical_or(blank_mask[:, t - 1], transitions_firsts[:, t])
-    transitions[blank_mask] = blank_trans
+
+    # Use the dynamic blank_trans from the tree instance
+    transitions[blank_mask] = self.transitions.blank_trans
     return transitions
 
   def _get_samples_from_segments(self, batch_size, p_total):
@@ -119,20 +130,24 @@ class ReplayMemory():
       probs, idxs, tree_idxs = self.transitions.find(samples)
       if np.all((self.transitions.index - idxs) % self.capacity > self.n) and np.all((idxs - self.transitions.index) % self.capacity >= self.history) and np.all(probs != 0):
         valid = True
-    
+
     transitions = self._get_transitions(idxs)
     all_states = transitions['state']
-    
-    # Get history frames. Shape: (Batch, History, C, 10, 10)
+
+    # Reshape stacked frames [Batch, History, C, H, W] -> [Batch, History*C, H, W]
+    # Note: We must use self.n_channels here to reshape correctly if needed, 
+    # but the flatten approach (Batch, -1, 10, 10) handles it automatically.
     states = torch.tensor(all_states[:, :self.history], device=self.device, dtype=torch.float32).div_(255)
-    # Get next n frames
+    states = states.view(batch_size, -1, 10, 10) # Flatten History and Channels
+
     next_states = torch.tensor(all_states[:, self.n:self.n + self.history], device=self.device, dtype=torch.float32).div_(255)
+    next_states = next_states.view(batch_size, -1, 10, 10) # Flatten History and Channels
 
     actions = torch.tensor(np.copy(transitions['action'][:, self.history - 1]), dtype=torch.int64, device=self.device)
     rewards = torch.tensor(np.copy(transitions['reward'][:, self.history - 1:-1]), dtype=torch.float32, device=self.device)
     R = torch.matmul(rewards, self.n_step_scaling)
     nonterminals = torch.tensor(np.expand_dims(transitions['nonterminal'][:, self.history + self.n - 1], axis=1), dtype=torch.float32, device=self.device)
-    
+
     return probs, idxs, tree_idxs, states, actions, R, next_states, nonterminals
 
   def sample(self, batch_size):
@@ -160,7 +175,7 @@ class ReplayMemory():
     blank_mask = np.zeros_like(transitions_firsts, dtype=np.bool_)
     for t in reversed(range(self.history - 1)):
       blank_mask[t] = np.logical_or(blank_mask[t + 1], transitions_firsts[t + 1])
-    transitions[blank_mask] = blank_trans
+    transitions[blank_mask] = self.transitions.blank_trans
     state = torch.tensor(transitions['state'], dtype=torch.float32, device=self.device).div_(255)
     self.current_idx += 1
     return state

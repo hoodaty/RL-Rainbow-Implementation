@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import math
 from tqdm import trange
+import wandb
 
 # Import from your custom distDQN files
 from distDQNagent import Agent
@@ -46,15 +47,11 @@ parser.add_argument('--evaluation-size', type=int, default=500, metavar='N', hel
 parser.add_argument('--checkpoint-interval', default=0, help='How often to checkpoint the model, defaults to 0 (never checkpoint)')
 parser.add_argument('--memory', help='Path to save/load the memory from')
 parser.add_argument('--disable-bzip-memory', action='store_true', help='Don\'t zip the memory file.')
-
-# --- MISSING ARGUMENTS ADDED HERE ---
 parser.add_argument('--render', action='store_true', help='Display screen (testing only)')
 parser.add_argument('--enable-cudnn', action='store_true', help='Enable cuDNN (faster but nondeterministic)')
-
-# --- DISTRIBUTIONAL DQN SPECIFIC DEFAULTS ---
-# 1. Multi-step = 1 (Standard C51)
+parser.add_argument('--wandb', action='store_true', help='Enable WandB logging')
+parser.add_argument('--wandb-project', type=str, default='rainbow-minatar', help='WandB project name')
 parser.add_argument('--multi-step', type=int, default=1, metavar='n', help='Number of steps for multi-step return')
-# 2. Priority Exponent = 0 (Uniform Replay)
 parser.add_argument('--priority-exponent', type=float, default=0.0, metavar='ω', help='Prioritised experience replay exponent')
 parser.add_argument('--priority-weight', type=float, default=0.0, metavar='β', help='Initial prioritised experience replay importance sampling weight')
 
@@ -74,6 +71,9 @@ if torch.cuda.is_available() and not args.disable_cuda:
   torch.cuda.manual_seed(np.random.randint(1, 10000))
 else:
   args.device = torch.device('cpu')
+
+if args.wandb:
+  wandb.init(project=args.wandb_project, config=vars(args), name=args.id, tags=['DistributionalDQN'])
 
 def log(s):
   print('[' + str(datetime.now().strftime('%Y-%m-%dT%H:%M:%S')) + '] ' + s)
@@ -96,7 +96,6 @@ action_space = env.action_space()
 args.n_channels = env.n_channels
 dqn = Agent(args, env)
 
-# CORRECTION: Ensure this uses args.model
 if args.model is not None and not args.evaluate:
   if not args.memory: raise ValueError('Cannot resume training without memory save path.')
   mem = load_memory(args.memory, args.disable_bzip_memory)
@@ -119,22 +118,17 @@ if args.evaluate:
 else:
   dqn.train()
   done = True
-  
-  # --- Epsilon Decay Setup ---
   eps_start = 1.0
   eps_end = 0.01
-  eps_decay = 50000 # Decay over 50k steps (MinAtar scale)
+  eps_decay = 50000 
 
   for T in trange(1, args.T_max + 1):
     if done:
       state = env.reset()
 
-    # Calculate Epsilon
     epsilon = eps_end + (eps_start - eps_end) * math.exp(-1. * T / eps_decay)
-
-    # Use Epsilon-Greedy (Available in agent.py)
     action = dqn.act_e_greedy(state, epsilon)
-    
+
     next_state, reward, done = env.step(action)
     if args.reward_clip > 0:
       reward = max(min(reward, args.reward_clip), -args.reward_clip)
@@ -142,12 +136,16 @@ else:
 
     if T >= args.learn_start:
       if T % args.replay_frequency == 0:
-        dqn.learn(mem)
+        loss = dqn.learn(mem)
+        if args.wandb:
+           wandb.log({'train/loss': loss, 'train/epsilon': epsilon}, step=T)
 
       if T % args.evaluation_interval == 0:
         dqn.eval()
         avg_reward, avg_Q = test(args, T, dqn, val_mem, metrics, results_dir)
         log('T = ' + str(T) + ' / ' + str(args.T_max) + ' | Avg. reward: ' + str(avg_reward) + ' | Avg. Q: ' + str(avg_Q) + ' | Epsilon: ' + str(round(epsilon, 3)))
+        if args.wandb:
+           wandb.log({'eval/avg_reward': avg_reward, 'eval/avg_Q': avg_Q}, step=T)
         dqn.train()
         if args.memory is not None: save_memory(mem, args.memory, args.disable_bzip_memory)
 

@@ -48,18 +48,18 @@ class DQN(nn.Module):
     super(DQN, self).__init__()
     self.atoms = args.atoms
     self.action_space = action_space
-    
+
     # Calculate input channels: History * Game Channels
     # Default to 4 (Breakout) if not specified, but main.py should pass it.
-    n_channels = getattr(args, 'n_channels', 4) 
+    n_channels = getattr(args, 'n_channels', 4)
     self.input_channels = args.history_length * n_channels
 
     # Small CNN for 10x10 input
     self.convs = nn.Sequential(
-        nn.Conv2d(self.input_channels, 16, kernel_size=3, stride=1), 
+        nn.Conv2d(self.input_channels, 16, kernel_size=3, stride=1),
         nn.ReLU()
     )
-    
+
     # Calculate output size: (10 - 3) + 1 = 8. So 16 * 8 * 8
     self.conv_output_size = 16 * 8 * 8
 
@@ -71,7 +71,7 @@ class DQN(nn.Module):
   def forward(self, x, log=False):
     # Flatten history and channels: (Batch, History, C, H, W) -> (Batch, History*C, H, W)
     x = x.view(-1, self.input_channels, 10, 10)
-    
+
     x = self.convs(x)
     x = x.view(-1, self.conv_output_size)
     v = self.fc_z_v(F.relu(self.fc_h_v(x)))  # Value stream
