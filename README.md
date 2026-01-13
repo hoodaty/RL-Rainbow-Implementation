@@ -4,7 +4,7 @@ This repository contains a PyTorch implementation of the **Rainbow** agent (Hess
 
 The project replicates the key components of the Rainbow paper to verify claims of data efficiency and performance on a computationally constrained environment (MinAtar). It includes rigorous ablation studies and experimentation with replay frequency to test the agent's robustness.
 
-**Authors:**
+**Teammates:**
 * Alice Lataste
 * Sami Laita
 * Soumodeep Hoodaty
